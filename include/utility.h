@@ -1,7 +1,7 @@
 #pragma once
 #ifndef _UTILITY_LIDAR_ODOMETRY_H_
 #define _UTILITY_LIDAR_ODOMETRY_H_
-#define PCL_NO_PRECOMPILE
+#define PCL_NO_PRECOMPILE 
 
 #include <ros/ros.h>
 
@@ -28,14 +28,14 @@
 #include <pcl/io/pcd_io.h>
 #include <pcl/filters/filter.h>
 #include <pcl/filters/voxel_grid.h>
-#include <pcl/filters/crop_box.h>
+#include <pcl/filters/crop_box.h> 
 #include <pcl_conversions/pcl_conversions.h>
 
 #include <tf/LinearMath/Quaternion.h>
 #include <tf/transform_listener.h>
 #include <tf/transform_datatypes.h>
 #include <tf/transform_broadcaster.h>
-
+ 
 #include <vector>
 #include <cmath>
 #include <algorithm>
@@ -124,7 +124,7 @@ public:
     float mappingCornerLeafSize;
     float mappingSurfLeafSize ;
 
-    float z_tollerance;
+    float z_tollerance; 
     float rotation_tollerance;
 
     // CPU Params
@@ -132,11 +132,11 @@ public:
     double mappingProcessInterval;
 
     // Surrounding map
-    float surroundingkeyframeAddingDistThreshold;
-    float surroundingkeyframeAddingAngleThreshold;
+    float surroundingkeyframeAddingDistThreshold; 
+    float surroundingkeyframeAddingAngleThreshold; 
     float surroundingKeyframeDensity;
     float surroundingKeyframeSearchRadius;
-
+    
     // Loop closure
     bool  loopClosureEnableFlag;
     float loopClosureFrequency;
@@ -151,6 +151,11 @@ public:
     float globalMapVisualizationPoseDensity;
     float globalMapVisualizationLeafSize;
 
+    // add by sx
+    bool has_ring;
+    float ang_bottom;
+    float ang_res_y;
+
     ParamServer()
     {
         nh.param<std::string>("/robot_id", robot_id, "roboat");
@@ -159,6 +164,11 @@ public:
         nh.param<std::string>("lio_sam/imuTopic", imuTopic, "imu_correct");
         nh.param<std::string>("lio_sam/odomTopic", odomTopic, "odometry/imu");
         nh.param<std::string>("lio_sam/gpsTopic", gpsTopic, "odometry/gps");
+
+        // add by sx
+        nh.param<bool>("lio_sam/has_ring", has_ring, true);
+        nh.param<float>("lio_sam/ang_bottom", ang_bottom, 15.0);
+        nh.param<float>("lio_sam/ang_res_y", ang_res_y, 1.0);
 
         nh.param<std::string>("lio_sam/lidarFrame", lidarFrame, "base_link");
         nh.param<std::string>("lio_sam/baselinkFrame", baselinkFrame, "base_link");
