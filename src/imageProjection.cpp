@@ -44,7 +44,7 @@ private:
 
     ros::Subscriber subLaserCloud;
     ros::Publisher  pubLaserCloud;
-    
+
     ros::Publisher pubExtractedCloud;
     ros::Publisher pubLaserCloudInfo;
 
@@ -156,12 +156,12 @@ public:
         // debug IMU data
         // cout << std::setprecision(6);
         // cout << "IMU acc: " << endl;
-        // cout << "x: " << thisImu.linear_acceleration.x << 
-        //       ", y: " << thisImu.linear_acceleration.y << 
+        // cout << "x: " << thisImu.linear_acceleration.x <<
+        //       ", y: " << thisImu.linear_acceleration.y <<
         //       ", z: " << thisImu.linear_acceleration.z << endl;
         // cout << "IMU gyro: " << endl;
-        // cout << "x: " << thisImu.angular_velocity.x << 
-        //       ", y: " << thisImu.angular_velocity.y << 
+        // cout << "x: " << thisImu.angular_velocity.x <<
+        //       ", y: " << thisImu.angular_velocity.y <<
         //       ", z: " << thisImu.angular_velocity.z << endl;
         // double imuRoll, imuPitch, imuYaw;
         // tf::Quaternion orientation;
@@ -207,6 +207,9 @@ public:
         if (sensor == SensorType::VELODYNE || sensor == SensorType::LIVOX)
         {
             pcl::moveFromROSMsg(currentCloudMsg, *laserCloudIn);
+            // Remove Nan points
+            std::vector<int> indices;
+            pcl::removeNaNFromPointCloud(*laserCloudIn, *laserCloudIn, indices);
         }
         else if (sensor == SensorType::OUSTER)
         {
@@ -238,13 +241,16 @@ public:
         timeScanEnd = timeScanCur + laserCloudIn->points.back().time;
 
         // check dense flag
-        if (laserCloudIn->is_dense == false)
-        {
-            ROS_ERROR("Point cloud is not in dense format, please remove NaN points first!");
-            ros::shutdown();
-        }
+       // if (laserCloudIn->is_dense == false)
+       // {
+       //     ROS_ERROR("Point cloud is not in dense format, please remove NaN points first!");
+       //     ros::shutdown();
+       // }
 
-        // check ring channel
+        if (!has_ring)
+            return true;
+
+        //check ring channel
         static int ringFlag = 0;
         if (ringFlag == 0)
         {
@@ -264,7 +270,7 @@ public:
             }
         }
 
-        // check point time
+        //check point time
         if (deskewFlag == 0)
         {
             deskewFlag = -1;
@@ -520,7 +526,27 @@ public:
 
     void projectPointCloud()
     {
+
         int cloudSize = laserCloudIn->points.size();
+
+        // add by sx
+        // Blog: https://blog.csdn.net/qq_42938987/article/details/108434290
+        // double omega_l = 0.361 * 10;       // scan angular velocity
+        // std::vector<bool> is_first(N_SCAN,true);
+        // std::vector<double> yaw_fp(N_SCAN, 0.0);      // yaw of first scan point
+        // std::vector<float> yaw_last(N_SCAN, 0.0);   // yaw of last scan point
+        // std::vector<float> time_last(N_SCAN, 0.0);  // last offset time
+
+        bool halfPassed = false;
+        cloudInfo.startOrientation = -atan2(laserCloudIn->points[0].y, laserCloudIn->points[0].x);
+        cloudInfo.endOrientation   = -atan2(laserCloudIn->points[laserCloudIn->points.size() - 1].y,
+                                                     laserCloudIn->points[laserCloudIn->points.size() - 1].x) + 2 * M_PI;
+        if (cloudInfo.endOrientation - cloudInfo.startOrientation > 3 * M_PI) {
+            cloudInfo.endOrientation -= 2 * M_PI;
+        } else if (cloudInfo.endOrientation - cloudInfo.startOrientation < M_PI)
+            cloudInfo.endOrientation += 2 * M_PI;
+        cloudInfo.orientationDiff = cloudInfo.endOrientation - cloudInfo.startOrientation;
+
         // range image projection
         for (int i = 0; i < cloudSize; ++i)
         {
@@ -529,17 +555,28 @@ public:
             thisPoint.y = laserCloudIn->points[i].y;
             thisPoint.z = laserCloudIn->points[i].z;
             thisPoint.intensity = laserCloudIn->points[i].intensity;
-
             float range = pointDistance(thisPoint);
             if (range < lidarMinRange || range > lidarMaxRange)
                 continue;
 
-            int rowIdn = laserCloudIn->points[i].ring;
+
+            //                                                           (从这开始到下面的if rowIdn<0为止为跑kitti而修改)
+            int rowIdn = -1;
+            if (has_ring == true){
+                rowIdn = laserCloudIn->points[i].ring;
+            }
+            else{
+                float verticalAngle, horizonAngle;
+                verticalAngle = atan2(thisPoint.z, sqrt(thisPoint.x * thisPoint.x + thisPoint.y * thisPoint.y)) * 180 / M_PI;
+                rowIdn = (verticalAngle + ang_bottom) / ang_res_y;
+            }
+
             if (rowIdn < 0 || rowIdn >= N_SCAN)
                 continue;
 
             if (rowIdn % downsampleRate != 0)
                 continue;
+
 
             int columnIdn = -1;
             if (sensor == SensorType::VELODYNE || sensor == SensorType::OUSTER)
@@ -555,14 +592,40 @@ public:
                 columnIdn = columnIdnCountVec[rowIdn];
                 columnIdnCountVec[rowIdn] += 1;
             }
-            
+
             if (columnIdn < 0 || columnIdn >= Horizon_SCAN)
                 continue;
 
             if (rangeMat.at<float>(rowIdn, columnIdn) != FLT_MAX)
                 continue;
 
-            thisPoint = deskewPoint(&thisPoint, laserCloudIn->points[i].time);
+            if (has_ring == true)
+                thisPoint = deskewPoint(&thisPoint, laserCloudIn->points[i].time);
+            else {
+                    float ori = -atan2(thisPoint.y, thisPoint.x);
+                    if (!halfPassed) {
+                        if (ori < cloudInfo.startOrientation - M_PI / 2) {
+                            ori += 2 * M_PI;
+                        } else if (ori > cloudInfo.startOrientation + M_PI * 3 / 2) {
+                            ori -= 2 * M_PI;
+                        }
+                        if (ori - cloudInfo.startOrientation > M_PI) {
+                            halfPassed = true;
+                        }
+                    } else {
+                        ori += 2 * M_PI;
+                        if (ori < cloudInfo.endOrientation - M_PI * 3 / 2) {
+                            ori += 2 * M_PI;
+                        } else if (ori > cloudInfo.endOrientation + M_PI / 2) {
+                            ori -= 2 * M_PI;
+                        }
+                    }
+                    float relTime = (ori - cloudInfo.startOrientation) / cloudInfo.orientationDiff;
+                    // 激光雷达10Hz，周期0.1
+                    laserCloudIn->points[i].time = 0.1 * relTime;
+                    thisPoint = deskewPoint(&thisPoint, laserCloudIn->points[i].time);
+            }
+
 
             rangeMat.at<float>(rowIdn, columnIdn) = range;
 
@@ -596,7 +659,7 @@ public:
             cloudInfo.endRingIndex[i] = count -1 - 5;
         }
     }
-    
+
     void publishClouds()
     {
         cloudInfo.header = cloudHeader;
@@ -610,11 +673,11 @@ int main(int argc, char** argv)
     ros::init(argc, argv, "lio_sam");
 
     ImageProjection IP;
-    
+
     ROS_INFO("\033[1;32m----> Image Projection Started.\033[0m");
 
     ros::MultiThreadedSpinner spinner(3);
     spinner.spin();
-    
+
     return 0;
 }
